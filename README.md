@@ -1,6 +1,5 @@
-# Exactly-Once Semantics (Java Demo)
-
-This project demonstrates Kafka's Exactly-Once Semantics (Transaction) using Java.
+# Exactly-Once Semantics
+Kafka's Exactly-Once Semantics (Transaction) using Java.
 
 ## Structure
 - `InputProducer`: Generates numbers 1-10.
@@ -41,3 +40,8 @@ mvn exec:java -Dexec.mainClass="com.demo.eos.InputProducer"
 - Even if `EOSStreamProcessor` crashes and you restart it multiple times.
 - `OutputVerifier` will **NEVER** show "❌ DUPLICATE DETECTED".
 - It will only show "✅ Received Valid" for exactly one result per input.
+
+
+Huge thanks to:
+- You, for reading this README 😄
+- Seglo for the amazing idea.
