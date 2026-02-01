@@ -3,7 +3,7 @@
 Kafka's Exactly-Once Semantics (Transaction) using Java.
 
 [//]: # (The semantic of exactly-once presented by kafka through transaction_id and epoch, in each producer, it maintain by PID and sequence number)
-# The Architecture of Certainty: Achieving Exactly-Once Processing in Apache Kafka's Distributed Ecosystem
+# The Architecture of Certainty: Achieving Exactly-Once Processing in Apache Kafka's Distributed Ecosystemmo
 
 The taxonomy of delivery semantics is traditionally divided into three distinct levels:
 at-most-once, at-least-once, and exactly-once.
@@ -62,6 +62,54 @@ This protocol ensures that even if a producer sends the same message ten times d
 A critical challenge in distributed transactions is the "zombie" producer—a process that has been partitioned from the network or is undergoing a long GC pause, leading the cluster to believe it has failed.7 If a new instance of the producer starts up and begins a new transaction while the old instance is still attempting to send data from its "dead" session, the integrity of the data stream could be compromised.2
 Kafka handles this through a fencing mechanism tied to the transactional.id and the producer epoch.8 When a producer calls initTransactions(), the coordinator increments the epoch associated with that transactional.id in the __transaction_state log.5 Any subsequent request from a producer with an older epoch is immediately rejected.5 This "fencing" operation ensures that only the most recently initialized instance of a producer can successfully commit data.8
 This fencing extends to the consumer offsets as well. In a "read-process-write" cycle, the producer includes the consumer offsets in its transaction.19 If a zombie producer attempts to commit offsets from a stale session, the Transaction Coordinator will reject the commit, preventing the zombie from advancing the consumer's progress and ensuring that the new producer instance can take over from the correct state.
+
+## Structure
+ 
+# System Flow & Implementation (How I use it)
+
+I implemented the **Consume-Transform-Produce** pattern to demonstrate a failure-proof data pipeline.
+
+## 1. The Workflow
+The system consists of three main stages operating in a continuous loop:
+
+1.  **Consume**: The `EOSStreamProcessor` reads a batch of raw numbers from the `input-topic`.
+2.  **Transform**: It processes the data (Business Logic: multiply by 2).
+3.  **Produce (Atomic Commit)**: It writes the result to `output-topic` AND commits the consumer offsets to `__consumer_offsets` in a **single atomic transaction**.
+
+## 2. Technical Implementation Details
+
+### A. Initialization
+- **Transactional ID**: I assign a unique `transactional.id` (e.g., `eos-transactional-id`) to the producer. This is crucial for the **Fencing** mechanism to work if the process restarts.
+- **Isolation Level**: The `OutputVerifier` (Consumer) is configured with `isolation.level=read_committed`. This ensures it *only* sees data from fully successful transactions.
+
+### B. The Transaction Loop (Code Logic)
+Inside `EOSStreamProcessor.java`:
+
+```java
+producer.beginTransaction(); // Start the atomic unit
+
+try {
+    // 1. Process records
+    for (Record record : records) {
+        // Transform logic...
+        producer.send(newResult); // Buffer the write (not visible yet)
+    }
+
+    // 2. Add Consumer Offsets to the Transaction
+    // This is the magic step! We commit "what we read" together with "what we wrote".
+    producer.sendOffsetsToTransaction(currentOffsets, consumerGroupId);
+
+    // 3. Commit
+    producer.commitTransaction(); // Atomic "All or Nothing"
+} catch (Exception e) {
+    producer.abortTransaction(); // Rollback everything
+}
+```
+
+### C. Chaos Engineering (Crash Simulation)
+To prove the system works, I injected a **Random Crash** (`Runtime.halt()`) right before the commit step.
+*   **Without Transactions**: This would lead to "Duplicate Data" (because we processed it, but crashed before committing offsets, so we'd re-process it after restart).
+*   **With Transactions**: The uncommitted data in Kafka is discarded. When the app restarts, it re-reads the old offset and tries again. **Result: Exactly 1 output.**
 
 ## Structure
 
